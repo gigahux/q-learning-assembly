@@ -1,0 +1,205 @@
+section .data
+    ; Maze stored as a flat 1D array (6x6 grid)
+    maze db '.', '.', '.', '.', '.', 'S', \
+              '.', 'X', 'X', '.', 'X', '.', \
+              '.', '.', 'X', '.', 'X', '.', \
+              'X', '.', 'X', '.', '.', '.', \
+              'X', '.', 'X', 'X', 'X', '.', \
+              '.', '.', '.', 'G', 'X', 'X'
+
+    maze_width  equ 6
+    maze_height equ 6
+
+    ; Starting position
+    start_x db 0
+    start_y db 5
+
+    ; Goal position
+    goal_x  db 5
+    goal_y  db 3
+
+    ; Q-table: 144 floating-point entries (6x6 grid with 4 actions)
+    q_table times 144 dd 0.0
+
+    alpha   dd 0.1  ; Learning rate
+    gamma   dd 0.9  ; Discount factor
+    epsilon dd 0.1  ; Exploration rate
+
+    ; Random number seed
+    rand_seed dd 12345678
+
+section .bss
+    ; State variables to hold agent's current position
+    state_x resb 1
+    state_y resb 1
+
+    ; Variable to track steps taken
+    steps_taken resb 1
+
+    ; Variable to store chosen action
+    chosen_action resb 1
+
+    ; Variable to store reward
+    reward resb 1
+
+section .text
+    extern printf
+    extern srand
+    extern rand
+
+    global _start
+
+_start:
+    ; Initialize random seed for exploration
+    mov eax, [rand_seed]
+    call srand
+
+    ; Initialize agent's position to start (0, 5)
+    mov al, [start_x]
+    mov [state_x], al
+    mov al, [start_y]
+    mov [state_y], al
+    mov byte [steps_taken], 0
+
+    ; Training loop (simplified to one step for demonstration)
+train:
+    ; Choose action using ε-greedy policy
+    call choose_action
+
+    ; Take the chosen action and get the reward
+    call perform_action
+
+    ; Update the Q-value using the Bellman equation
+    call update_q_value
+
+    ; Render the maze with the agent's position
+    call render_maze
+
+    ; Check if the agent has reached the goal
+    cmp byte [state_x], [goal_x]
+    jne not_goal
+    cmp byte [state_y], [goal_y]
+    jne not_goal
+
+    ; Agent reached the goal
+    mov byte [reward], 1  ; Set reward to 1 (goal reached)
+    jmp end_program
+
+not_goal:
+    ; Agent did not reach the goal, keep training
+    jmp train
+
+end_program:
+    ; Infinite loop to prevent program exit
+    jmp end_program
+
+; Choose action using ε-greedy policy
+choose_action:
+    ; Generate a random number to decide between exploration or exploitation
+    call rand
+    mov ecx, 100  ; Scaling random number between 0 and 100
+    xor edx, edx
+    div ecx
+    cmp eax, dword [epsilon]
+    jb explore  ; If random number < ε, explore (random action)
+
+    ; Exploit: Choose the action with the highest Q-value
+    call find_best_action
+    jmp end_choose_action
+
+explore:
+    ; Randomly select one of the 4 actions
+    call rand
+    xor edx, edx
+    mov ecx, 4  ; 4 possible actions (up, down, left, right)
+    div ecx
+    mov [chosen_action], dl
+
+end_choose_action:
+    ret
+
+; Find the action with the highest Q-value for the current state
+find_best_action:
+    ; Load current state (state_x, state_y)
+    mov al, [state_x]
+    mov bl, [state_y]
+
+    ; Compute the Q-table index for the current state
+    mov cl, 6  ; Maze width
+    mul cl     ; Multiply state_x by maze width
+    add ax, bx ; Add state_y to get the base index for the current state
+
+    ; Check all 4 actions for the maximum Q-value
+    mov ecx, 4
+    xor esi, esi ; Best action index
+    mov ebx, q_table + eax * 4 ; Base address for Q-values
+
+    ; Start with the first action
+    fld dword [ebx]
+    mov edi, 0  ; Initialize best action index to 0
+
+find_best_loop:
+    ; Load the next Q-value into the FPU
+    fld dword [ebx + esi * 4]
+    fcom
+    fstsw ax
+    sahf
+    jae next_action  ; If current Q-value is larger, update best action
+
+    mov edi, esi  ; Update best action index
+
+next_action:
+    inc esi
+    cmp esi, 4
+    jne find_best_loop
+
+    ; Store the best action in chosen_action
+    mov [chosen_action], edi
+    ret
+
+; Perform the chosen action, update the agent's state, and return the reward
+perform_action:
+    ; Implement state transition based on the chosen action (like in Phase 2)
+    ; This will involve moving the agent and checking for goal/walls.
+    ; Return reward for the action (e.g., -0.1 for regular moves, +1 for goal)
+    mov byte [reward], -1
+    ; Check if goal is reached
+    cmp byte [state_x], [goal_x]
+    jne not_goal_action
+    cmp byte [state_y], [goal_y]
+    jne not_goal_action
+
+    ; Goal is reached
+    mov byte [reward], 1
+
+not_goal_action:
+    ret
+
+; Update Q-value using the Bellman equation
+update_q_value:
+    ; Load current state (state_x, state_y)
+    mov al, [state_x]
+    mov bl, [state_y]
+
+    ; Compute the index in the Q-table
+    mov cl, 6
+    mul cl
+    add ax, bx
+    mov esi, eax
+    add esi, [chosen_action] ; Add chosen action to the base index
+
+    ; Bellman equation: Q(s, a) = Q(s, a) + α * (reward + γ * max(Q(s', a')) - Q(s, a))
+    ; Assume reward is stored in eax
+    fld dword [reward]
+
+    ; Calculate the update
+    ; ...
+
+    ret
+
+; Render the maze with the agent's position
+render_maze:
+    ; Clear the screen (OS-specific, but we can simulate it in text-based rendering)
+    ; Place the agent in the maze at the current position
+    ; Print the maze to the console with the agent marked
+    ret
