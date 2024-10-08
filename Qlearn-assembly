@@ -28,6 +28,8 @@ section .data
     ; Random number seed
     rand_seed dd 12345678
 
+    newline db 10              ; Newline character
+
 section .bss
     ; State variables to hold agent's current position
     state_x resb 1
@@ -61,7 +63,7 @@ _start:
     mov [state_y], al
     mov byte [steps_taken], 0
 
-    ; Training loop (simplified to one step for demonstration)
+    ; Training loop
 train:
     ; Choose action using ε-greedy policy
     call choose_action
@@ -100,7 +102,7 @@ choose_action:
     mov ecx, 100  ; Scaling random number between 0 and 100
     xor edx, edx
     div ecx
-    cmp eax, dword [epsilon * 100]  ; Scale epsilon to 0-100
+    cmp eax, dword [epsilon * 100] ; Scale epsilon for comparison
     jb explore  ; If random number < ε, explore (random action)
 
     ; Exploit: Choose the action with the highest Q-value
@@ -111,7 +113,7 @@ explore:
     ; Randomly select one of the 4 actions
     call rand
     xor edx, edx
-    mov ecx, 4  ; 4 possible actions (up, down, left, right)
+    mov ecx, 4  ; 4 possible actions (0: up, 1: down, 2: left, 3: right)
     div ecx
     mov [chosen_action], dl
 
@@ -126,17 +128,17 @@ find_best_action:
 
     ; Compute the Q-table index for the current state
     mov cl, maze_width
-    mul cl     ; Multiply state_x by maze width
-    add ax, bx ; Add state_y to get the base index for the current state
+    mul cl         ; Multiply state_x by maze width
+    add ax, bx     ; Add state_y to get the base index for the current state
 
     ; Check all 4 actions for the maximum Q-value
     mov ecx, 4
-    xor esi, esi ; Best action index
+    xor esi, esi   ; Best action index
     mov ebx, q_table + eax * 4 ; Base address for Q-values
 
     ; Start with the first action
-    fld dword [ebx]
-    mov edi, 0  ; Initialize best action index to 0
+    fld dword [ebx] ; Load Q-value for the first action
+    mov edi, 0      ; Initialize best action index to 0
 
 find_best_loop:
     ; Load the next Q-value into the FPU
@@ -144,9 +146,9 @@ find_best_loop:
     fcom
     fstsw ax
     sahf
-    jae next_action  ; If current Q-value is larger, update best action
+    jae next_action  ; If current Q-value is larger or equal, skip updating
 
-    mov edi, esi  ; Update best action index
+    mov edi, esi      ; Update best action index
 
 next_action:
     inc esi
@@ -159,80 +161,75 @@ next_action:
 
 ; Perform the chosen action, update the agent's state, and return the reward
 perform_action:
-    ; Load current state
-    mov al, [chosen_action]  ; Load the chosen action
-    mov bl, [state_x]        ; Load current state x
-    mov cl, [state_y]        ; Load current state y
-    mov byte [reward], -1    ; Default reward for regular moves
+    ; Load current position
+    mov al, [state_x]
+    mov bl, [state_y]
 
-    ; Define actions based on chosen action
-    cmp al, 0               ; Action: Up
+    ; Determine new position based on action
+    mov cl, [chosen_action] ; Load chosen action
+
+    ; Check action and update position
+    cmp cl, 0          ; Up
     je move_up
-    cmp al, 1               ; Action: Down
+    cmp cl, 1          ; Down
     je move_down
-    cmp al, 2               ; Action: Left
+    cmp cl, 2          ; Left
     je move_left
-    cmp al, 3               ; Action: Right
+    cmp cl, 3          ; Right
     je move_right
-    jmp end_action          ; Exit if no valid action
+
+    jmp done_moving
 
 move_up:
-    dec bl                  ; Move up (decrease y)
-    jmp validate_position
+    dec bl              ; Move up (decrease row)
+    jmp validate_move
 
 move_down:
-    inc bl                  ; Move down (increase y)
-    jmp validate_position
+    inc bl              ; Move down (increase row)
+    jmp validate_move
 
 move_left:
-    dec cl                  ; Move left (decrease x)
-    jmp validate_position
+    dec al              ; Move left (decrease column)
+    jmp validate_move
 
 move_right:
-    inc cl                  ; Move right (increase x)
-    jmp validate_position
+    inc al              ; Move right (increase column)
 
-validate_position:
-    ; Check if the new position is valid (not a wall and within bounds)
-    cmp bl, 0               ; Check for y boundary (0)
-    jl invalid_move
-    cmp bl, maze_height     ; Check for y boundary (height)
-    jge invalid_move
-    cmp cl, 0               ; Check for x boundary (0)
-    jl invalid_move
-    cmp cl, maze_width      ; Check for x boundary (width)
-    jge invalid_move
+validate_move:
+    ; Check for walls and boundaries
+    cmp al, 0          ; Check left boundary
+    jb invalid_move
+    cmp al, maze_width ; Check right boundary
+    jae invalid_move
+    cmp bl, 0          ; Check upper boundary
+    jb invalid_move
+    cmp bl, maze_height; Check lower boundary
+    jae invalid_move
 
-    ; Check if the new position is a wall
-    mov di, cl              ; Store x position
-    mov si, bl              ; Store y position
-    mov bx, maze_width      ; Load maze width
-    mul bx                  ; Calculate offset for maze
-    add ax, di              ; Add x position
-    add ax, si              ; Add y position
-    cmp byte [maze + ax], 'X' ; Check if it's a wall
+    ; Check for walls
+    mov dl, [maze + bl * maze_width + al]
+    cmp dl, 'X'        ; Check if the new position is a wall
     je invalid_move
 
-    ; Update state if the position is valid
-    mov [state_x], cl
+    ; Update agent's position if valid
+    mov [state_x], al
     mov [state_y], bl
-
-    ; Check if the goal is reached
-    cmp byte [state_x], [goal_x]
-    je goal_reached
-    cmp byte [state_y], [goal_y]
-    je goal_reached
-
-    jmp end_action
-
-goal_reached:
-    mov byte [reward], 1    ; Set reward to 1 (goal reached)
+    mov byte [reward], -1 ; Regular move penalty
+    jmp done_moving
 
 invalid_move:
-    ; Stay in the same position
-    jmp end_action
+    mov byte [reward], -1 ; Regular move penalty
 
-end_action:
+done_moving:
+    ; Check if goal is reached
+    cmp byte [state_x], [goal_x]
+    jne not_goal_action
+    cmp byte [state_y], [goal_y]
+    jne not_goal_action
+
+    ; Goal is reached
+    mov byte [reward], 1
+not_goal_action:
     ret
 
 ; Update Q-value using the Bellman equation
@@ -243,105 +240,169 @@ update_q_value:
 
     ; Compute the index in the Q-table
     mov cl, maze_width
-    mul cl          ; Multiply state_x by maze width
-    add ax, bx     ; Add state_y to get the base index for the current state
-
+    mul cl
+    add ax, bx
     mov esi, eax
     add esi, [chosen_action] ; Add chosen action to the base index
 
     ; Load current Q-value
-    fld dword [q_table + esi * 4] ; Load Q(s, a)
+    fld dword [q_table + esi * 4]
 
     ; Load the reward
     fld dword [reward]
 
-    ; Calculate the max Q-value for the next state
-    ; For simplicity, assume max Q is still 0 (no next action logic)
-    ; In practice, you'd implement logic to find the max Q-value for the next state here
-    ; Here we just use 0, which means we assume the agent can only go to the goal
+    ; Prepare to find max Q-value for the next state
+    ; Simulate the next state based on chosen action
+    mov cl, [chosen_action] ; Load chosen action
 
-    fldz                    ; Load 0 as the max Q-value for future states
+    ; Adjust the state based on action to find new state
+    mov al, [state_x]
+    mov bl, [state_y]
+    cmp cl, 0
+    je move_up_update
+    cmp cl, 1
+    je move_down_update
+    cmp cl, 2
+    je move_left_update
+    cmp cl, 3
+    je move_right_update
 
-    ; Calculate the update
-    fld dword [gamma]      ; Load gamma
-    fmul                    ; gamma * max(Q(s', a'))
-    fadd                    ; r + gamma * max(Q(s', a'))
+move_up_update:
+    dec bl              ; Move up
+    jmp get_max_q_value
 
-    ; Calculate the new Q-value
-    fsub                    ; (r + gamma * max(Q(s', a'))) - Q(s, a)
-    fld dword [alpha]      ; Load alpha
-    fmul                    ; α * (r + γ * max(Q(s', a')) - Q(s, a))
-    fadd                    ; Q(s, a) = Q(s, a) + update
+move_down_update:
+    inc bl              ; Move down
+    jmp get_max_q_value
 
-    ; Store the updated Q-value back in the Q-table
-    fstp dword [q_table + esi * 4] ; Store updated Q-value
+move_left_update:
+    dec al              ; Move left
+    jmp get_max_q_value
 
+move_right_update:
+    inc al              ; Move right
+    jmp get_max_q_value
+
+get_max_q_value:
+    ; Validate the new position
+    cmp al, 0          ; Check left boundary
+    jb set_max_q_zero
+    cmp al, maze_width ; Check right boundary
+    jae set_max_q_zero
+    cmp bl, 0          ; Check upper boundary
+    jb set_max_q_zero
+    cmp bl, maze_height; Check lower boundary
+    jae set_max_q_zero
+
+    ; Check for walls
+    mov dl, [maze + bl * maze_width + al]
+    cmp dl, 'X'        ; Check if the new position is a wall
+    je set_max_q_zero
+
+    ; New position is valid; calculate index in Q-table
+    mov cx, bl
+    mov dx, al
+    mov bx, maze_width
+    mul bx              ; Calculate new state index
+    add ax, dx          ; Add new state column index
+    shl eax, 2          ; Multiply by 4 (size of float)
+
+    ; Load max Q-value from new state for all actions
+    mov ecx, 4
+    xor edi, edi
+    fld dword [q_table + eax] ; Load first Q-value
+    fld dword [q_table + eax + 4] ; Load second Q-value
+    fcomip st(0), st(1)
+    fstp st(0)
+    jae load_first_max
+
+    load_first_max:
+    fld dword [q_table + eax + 8] ; Load third Q-value
+    fcomip st(0), st(1)
+    fstp st(0)
+    jae load_second_max
+
+    load_second_max:
+    fld dword [q_table + eax + 12] ; Load fourth Q-value
+    fcomip st(0), st(1)
+    fstp st(0)
+    jae done_max_q
+
+    done_max_q:
+    ; Now we have the max Q-value in ST(0)
+    ; Bellman update: Q(s, a) = Q(s, a) + α * (reward + γ * max(Q(s', a')) - Q(s, a))
+
+    fld dword [reward]
+    fld dword [gamma]
+    fmul st(0), st(1)         ; α * (reward + γ * max)
+    fld dword [alpha]         ; Load α
+    fmul st(0), st(1)         ; α * (reward + γ * max)
+    fsub st(0), st(2)         ; Calculate Q(s, a) - max
+    fadd st(1), st(0)         ; Add max Q-value
+
+    ; Store updated Q-value back in the Q-table
+    fstp dword [q_table + esi * 4]
     ret
 
 ; Render the maze with the agent's position
 render_maze:
-    ; Clear the screen (OS-specific, but we can simulate it in text-based rendering)
-    ; Place the agent in the maze at the current position
-    mov rsi, maze_width      ; Width of the maze
-    mov rdi, maze_height     ; Height of the maze
+    ; Print the maze to the console with the agent marked
+    mov ecx, maze_height
+    xor ebx, ebx ; Row index
 
-    ; Print the maze row by row
-    mov bx, 0                ; Row index
-print_rows:
-    cmp bx, rdi              ; Check if we reached the height
-    jge end_render
+print_loop:
+    push ecx ; Save loop counter
+    mov edx, maze_width
+    xor edi, edi ; Column index
 
-    mov cx, 0                ; Column index
-print_columns:
-    cmp cx, rsi              ; Check if we reached the width
+print_row:
+    cmp edi, maze_width
     jge print_newline
 
-    ; Calculate current position in maze
-    mov ax, bx
-    imul ax, rsi             ; ax = row * width
-    add ax, cx               ; ax = ax + column
+    ; Calculate index in maze array
+    mov eax, ebx
+    mov ecx, maze_width
+    mul ecx
+    add eax, edi
 
-    ; Check if the current position is the agent's position
+    ; Check if this is the agent's position
     mov al, [state_x]
-    cmp al, cx               ; Compare with the column
+    cmp al, edi
     jne not_agent
-
     mov al, [state_y]
-    cmp al, bx               ; Compare with the row
-    je agent_found
+    cmp al, ebx
+    je print_agent
 
 not_agent:
-    mov dl, [maze + ax]      ; Load the current maze character
-    jmp print_char
+    ; Print the maze character
+    mov al, [maze + eax]
+    mov [buffer], al
+    mov eax, buffer
+    call printf
+    jmp print_increment
 
-agent_found:
-    mov dl, '*'              ; Replace with agent symbol
+print_agent:
+    ; Print agent symbol
+    mov al, 'A'
+    mov [buffer], al
+    mov eax, buffer
+    call printf
 
-print_char:
-    ; Print the character
-    mov rax, 1               ; sys_write
-    mov rdi, 1               ; file descriptor (stdout)
-    mov rsi, rsp             ; pointer to character
-    mov byte [rsp], dl       ; Place character on the stack
-    mov rdx, 1               ; number of bytes
-    syscall
-
-    inc cx                   ; Move to the next column
-    jmp print_columns
+print_increment:
+    inc edi
+    jmp print_row
 
 print_newline:
-    ; Print newline
-    mov rax, 1               ; sys_write
-    mov rdi, 1               ; file descriptor (stdout)
-    mov rsi, newline         ; pointer to newline character
-    mov rdx, 1               ; number of bytes
-    syscall
+    ; Print a newline after each row
+    mov eax, newline
+    call printf
 
-    inc bx                   ; Move to the next row
-    jmp print_rows
+    pop ecx ; Restore loop counter
+    inc ebx
+    cmp ebx, maze_height
+    jl print_loop
 
-end_render:
     ret
 
 section .data
-newline db 10              ; Newline character
+    buffer db 0   ; Buffer for single character print
